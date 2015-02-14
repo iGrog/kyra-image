@@ -1,0 +1,21 @@
+{
+    "name": "kyra/image",
+    "description": "Kyra Image",
+    "type": "yii2-extension",
+    "keywords": ["yii2","extension"],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Kyra",
+            "email": "Kyra@kyra.fi"
+        }
+    ],
+    "require": {
+        "yiisoft/yii2": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "kyra\\image\\": ""
+        }
+    }
+}
