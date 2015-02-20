@@ -5,6 +5,7 @@ namespace kyra\image\models;
 use kyra\common\Transliter;
 use Yii;
 use yii\base\Exception;
+use yii\helpers\ArrayHelper;
 use yii\web\UploadedFile;
 
 /**
@@ -24,10 +25,6 @@ class Image extends \yii\db\ActiveRecord
     public static function tableName()
     {
         return 'images';
-    }
-
-    public static function RemoveImage($iid, $path)
-    {
     }
 
     /**
@@ -78,7 +75,7 @@ class Image extends \yii\db\ActiveRecord
     {
         foreach ($img as $key => $value)
         {
-            if (is_array($key)) continue;
+            if (is_array($value)) continue;
             $template = str_replace('{' . $key . '}', $value, $template);
         }
 
@@ -94,10 +91,10 @@ class Image extends \yii\db\ActiveRecord
         $addFolder = !empty($uploadParams['folderParam']) && array_key_exists($uploadParams['folderParam'], $img)
             ? $img[$uploadParams['folderParam']] . '/'
             : '';
-        unset($uploadParams['folderParam']);
-        unset($uploadParams[0]);
+//        unset($uploadParams['folderParam']);
+//        unset($uploadParams[0]);
         $ret = [];
-        foreach ($uploadParams as $key => $sizes)
+        foreach ($uploadParams['sizes'] as $key => $sizes)
         {
             $img['Key'] = $key;
             $fileName = self::GenFileName($img, $template);
@@ -109,6 +106,36 @@ class Image extends \yii\db\ActiveRecord
         return $ret;
     }
 
+    public function CropImage($uploadParams, $folderParams, $iid, $x, $y, $width, $height, $key, $increaseVersion=true)
+    {
+        $orig = Image::find()->where(['IID' => $iid])->asArray()->one();
+        if(empty($orig)) return false;
+
+        if(!empty($folderParams))
+            $orig = ArrayHelper::merge($orig, $folderParams); // Нужно для FolderParam, для правильного построения путей
+
+        $paths = $this->GetImageAllPaths($uploadParams, $orig);
+        $origFile = $paths['o']['ABS'];
+        $saveFile = $paths[$key]['ABS'];
+
+        $sizeX = $uploadParams['sizes'][$key][0];
+        $sizeY = $uploadParams['sizes'][$key][1];
+        $quality = isset($uploadParams['sizes'][$key][2]) ? $uploadParams['sizes'][$key][2] : 90;
+
+        $ret = $this->CropImageFile($origFile, $saveFile, $x, $y, $width, $height, $sizeX, $sizeY, $quality);
+        return $ret;
+    }
+
+    public function CropImageFile($origFile, $fileToSave, $x, $y, $width, $height, $sizeX, $sizeY, $quality=80)
+    {
+        $origImage = Yii::$app->image->load($origFile);
+
+        $origImage->crop($width, $height, $x, $y);
+        $origImage->resize($sizeX, $sizeY, Yii\image\drivers\Image::NONE);
+        $ret = $origImage->save($fileToSave, $quality);
+
+        return $ret;
+    }
 
     public function AddImage(UploadedFile $img, $uploadParams, $uid = 0, $imgParams = [])
     {
@@ -122,6 +149,7 @@ class Image extends \yii\db\ActiveRecord
 
         try
         {
+            $imgData = getimagesize($img->tempName);
             $i = new Image;
             $i->FileName = $name;
             $i->UID = empty($uid) ? null : $uid;
@@ -129,6 +157,11 @@ class Image extends \yii\db\ActiveRecord
             $i->FileDesc = isset($imgParams['desc']) ? $imgParams['desc'] : null;
             $i->FileSize = $img->size;
             $i->FileType = $img->type;
+            $i->Width = $imgData[0];
+            $i->Height = $imgData[1];
+            $i->Orientation = $imgData[0] == $imgData[1]
+                            ? 'S'
+                            : ($imgData[0] > $imgData[1] ? 'L' : 'P');
             $i->Exif = @json_encode(@exif_read_data($img->tempName));
             $i->save(false);
             $iid = $i->IID;
@@ -139,13 +172,13 @@ class Image extends \yii\db\ActiveRecord
             $relativePath = str_replace('@webroot', '', $uploadParams[0]);
 
             // Теперь проходим по всем параметрам ресайза и записываем файлы под правильными именами
-            unset($uploadParams[0]);
+//            unset($uploadParams[0]);
             $addFolder = isset($uploadParams['folderParam']) ? $uploadParams['folderParam'] : '';
-            unset($uploadParams['folderParam']);
+//            unset($uploadParams['folderParam']);
 
             $data = ['IID' => $iid];
 
-            foreach ($uploadParams as $key => $sizes)
+            foreach ($uploadParams['sizes'] as $key => $sizes)
             {
                 // Приходится грузить каждый раз картинку заново, так как ресайзить её несколько раз не получается за 1 раз
                 $origImage = Yii::$app->image->load($img->tempName);
@@ -193,7 +226,8 @@ class Image extends \yii\db\ActiveRecord
             unlink($img->tempName);
 
             return ['hasError' => false, 'data' => $data];
-        } catch (Exception $ex)
+        }
+        catch (Exception $ex)
         {
             return ['hasError' => true, 'error' => $ex->getMessage()];
         }

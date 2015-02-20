@@ -14,10 +14,13 @@ class m141002_114403_KyraImage extends Migration
             'FileDesc' => 'TEXT NULL',
             'FileSize' => Schema::TYPE_INTEGER . ' NOT NULL',
             'FileType' => Schema::TYPE_STRING . '(100) NOT NULL',
+            'Width' => Schema::TYPE_INTEGER,
+            'Height' => Schema::TYPE_INTEGER,
+            'Orientation' => 'CHAR (1)',
             'Exif' => 'TEXT NULL',
             'UID' => Schema::TYPE_INTEGER . '(11) DEFAULT NULL'
         ]);
-        $this->createIndex('user_owner_image', 'image', 'UID', false);
+        $this->createIndex('user_owner_image', 'images', 'UID', false);
     }
 
     public function down()
