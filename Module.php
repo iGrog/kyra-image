@@ -14,6 +14,7 @@ class Module extends BaseModule
     public $controllerNamespace = 'kyra\image\controllers';
     public $fieldNames = ['Image', 'attachment[file]'];
     public $accessRoles = ['admin'];
+    public $pathGeneratorClass = '';
 
     public function init()
     {

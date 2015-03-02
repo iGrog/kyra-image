@@ -17,7 +17,7 @@
         public function actionUpload()
         {
             $path = isset($_POST['path']) ? $_POST['path'] : $this->module->defaultUploadPath;
-            if(!array_key_exists($path, $this->module->uploadParams)) throw new Exception('No key '. $path. ' in `uploadParams`');
+            if(!array_key_exists($path, $this->module->uploadParams)) throw new Exception('No key '. $path);
             $uploadParams = $this->module->uploadParams[$path];
 
             $img = null;
@@ -29,7 +29,7 @@
 
             if(empty($img)) return ['hasError' => true, 'error' => 'No image'];
             $imgParams = isset($_POST['params']) ? $_POST['params'] : [];
-            $imgParams['nameTemplate'] = $this->module->nameTemplate;
+
             $uid = Yii::$app->user->id;
 
             $i = new Image;

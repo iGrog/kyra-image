@@ -27,6 +27,7 @@ class Image extends \yii\db\ActiveRecord
         return 'images';
     }
 
+
     /**
      * @inheritdoc
      */
@@ -49,61 +50,32 @@ class Image extends \yii\db\ActiveRecord
         ];
     }
 
+    public  static function GetPathGeneratorByUploadParams($uploadParams)
+    {
+        $pathGenerator = isset($uploadParams['pathGeneratorClass'])
+                        ? Yii::createObject($uploadParams['pathGeneratorClass'])
+                        : new DefaultPathGenerator();
+
+        return $pathGenerator;
+    }
+
+    public static function GetPathGenerator($path)
+    {
+        $imgModule = Yii::$app->getModule('kyra.image');
+        $uploadParams = $imgModule->uploadParams[$path];
+        return self::GetPathGeneratorByUploadParams($uploadParams);
+    }
+
 
     public static function GetImageUrl($img, $path, $key)
     {
         $imgModule = Yii::$app->getModule('kyra.image');
-        $path = $imgModule->uploadParams[$path];
-        $template = $imgModule->nameTemplate;
-        $img['Key'] = $key;
-        if (empty($img['UID'])) $img['UID'] = 0;
-        $fileName = self::GenFileName($img, $template);
-        $relativePath = str_replace('@webroot', '', $path[0]);
-        $addFolder = isset($path['folderParam']) ? $path['folderParam'] : '';
-        if (!empty($addFolder) && array_key_exists($addFolder, $img))
-        {
-            $addFolder = $img[$addFolder];
-            $fullPath = $relativePath . '/' . $addFolder . '/' . $fileName;
-        }
-        else
-            $fullPath = $relativePath . '/' . $fileName;
+        $uploadParams = $imgModule->uploadParams[$path];
+        $pathGenerator = self::GetPathGeneratorByUploadParams($uploadParams);
 
-        return $fullPath;
-    }
-
-    public static function GenFileName($img, $template)
-    {
-        foreach ($img as $key => $value)
-        {
-            if (is_array($value)) continue;
-            $template = str_replace('{' . $key . '}', $value, $template);
-        }
-
-        return $template;
-    }
-
-    public static function GetImageAllPaths($uploadParams, $img)
-    {
-        $basicPath = $uploadParams[0];
-        $imgModule = Yii::$app->getModule('kyra.image');
-        $template = $imgModule->nameTemplate;
-        if (empty($img['UID'])) $img['UID'] = 0;
-        $addFolder = !empty($uploadParams['folderParam']) && array_key_exists($uploadParams['folderParam'], $img)
-            ? $img[$uploadParams['folderParam']] . '/'
-            : '';
-//        unset($uploadParams['folderParam']);
-//        unset($uploadParams[0]);
-        $ret = [];
-        foreach ($uploadParams['sizes'] as $key => $sizes)
-        {
-            $img['Key'] = $key;
-            $fileName = self::GenFileName($img, $template);
-            $fullAbsolutePath = Yii::getAlias($basicPath) . '/' . $addFolder . $fileName;
-            $fullRelativePath = str_replace('@webroot', '', $basicPath) . '/' . $addFolder . $fileName;
-            $ret[$key] = ['ABS' => $fullAbsolutePath, 'REL' => $fullRelativePath];
-        }
-
-        return $ret;
+        $paths = $pathGenerator->GeneratePaths(array_merge($uploadParams, $img));
+        if(isset($paths[$key]))
+            return $paths[$key]['REL'];
     }
 
     public function CropImage($uploadParams, $folderParams, $iid, $x, $y, $width, $height, $key, $increaseVersion=true)
@@ -114,7 +86,8 @@ class Image extends \yii\db\ActiveRecord
         if(!empty($folderParams))
             $orig = ArrayHelper::merge($orig, $folderParams); // Нужно для FolderParam, для правильного построения путей
 
-        $paths = $this->GetImageAllPaths($uploadParams, $orig);
+        $pathGenerator = self::GetPathGeneratorByUploadParams($uploadParams);
+        $paths = $pathGenerator->GeneratePaths(array_merge($orig, $uploadParams));
         $origFile = $paths['o']['ABS'];
         $saveFile = $paths[$key]['ABS'];
 
@@ -167,16 +140,24 @@ class Image extends \yii\db\ActiveRecord
             $iid = $i->IID;
             if (empty($iid)) return ['hasError' => false, 'error' => 'Error in DB while adding image'];
 
-            // Получим имя папки куда надо записать файл
-            $absolutePath = Yii::getAlias($uploadParams[0]);
-            $relativePath = str_replace('@webroot', '', $uploadParams[0]);
-
-            // Теперь проходим по всем параметрам ресайза и записываем файлы под правильными именами
-//            unset($uploadParams[0]);
-            $addFolder = isset($uploadParams['folderParam']) ? $uploadParams['folderParam'] : '';
-//            unset($uploadParams['folderParam']);
+            $pathGenerator = isset($uploadParams['pathGeneratorClass'])
+                            ? Yii::createObject($uploadParams['pathGeneratorClass'])
+                            : Yii::createObject('kyra/image/models/DefaultPathGenerator');
+//            else
+//            {
+//                $absolutePath = Yii::getAlias($uploadParams[0]);
+//                $relativePath = str_replace('@webroot', '', $uploadParams[0]);
+//            }
 
             $data = ['IID' => $iid];
+
+            $obj = array_merge($i->attributes,
+                $imgParams,
+                $uploadParams,
+                ['UID' => $uid, 'FileName' => $name]
+                );
+
+            $paths = $pathGenerator->GeneratePaths($obj);
 
             foreach ($uploadParams['sizes'] as $key => $sizes)
             {
@@ -185,17 +166,11 @@ class Image extends \yii\db\ActiveRecord
                 $origWidth = $origImage->width;
                 $origHeight = $origImage->height;
 
-                $subFolder = array_key_exists($addFolder, $imgParams)
-                    ? $imgParams[$addFolder] . '/'
-                    : '';
-                $obj = ['IID' => $iid, 'UID' => $uid, 'FileName' => $name, 'Key' => $key];
-                $fullFileName = self::GenFileName($obj, $imgParams['nameTemplate']);
+                $paramAbsolutePath = $paths[$key]['ABS'];
+                $paramRelativePath = $paths[$key]['REL'];
 
-                if (!is_dir($absolutePath . '/' . $subFolder))
-                    mkdir($absolutePath . '/' . $subFolder, 0777, true);
-
-                $paramAbsolutePath = $absolutePath . '/' . $subFolder . $fullFileName;
-                $paramRelativePath = $relativePath . '/' . $subFolder . $fullFileName;
+                if(!is_dir($paths[$key]['ABSFOLDER']))
+                    mkdir($paths[$key]['ABSFOLDER'], 0777, true);
 
                 $w = $sizes[0];
                 $h = $sizes[1];
@@ -224,7 +199,6 @@ class Image extends \yii\db\ActiveRecord
             }
 
             unlink($img->tempName);
-
             return ['hasError' => false, 'data' => $data];
         }
         catch (Exception $ex)
