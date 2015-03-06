@@ -5,6 +5,7 @@
     use kyra\common\PayloadEvent;
     use kyra\common\Transliter;
     use kyra\image\models\Image;
+    use kyra\image\models\ImageUploadedEvent;
     use Yii;
     use yii\base\Exception;
     use yii\helpers\ArrayHelper;
@@ -35,9 +36,10 @@
             $i = new Image;
             $data = $i->AddImage($img, $uploadParams, $uid, $imgParams);
 
-            $p = new PayloadEvent;
-            $p->payload = ArrayHelper::merge($data, $imgParams);
-            Yii::$app->trigger(Image::IMAGE_UPLOADED, $p);
+            $iue = new ImageUploadedEvent();
+            $iue->uploadKey = $path;
+            $iue->payload = ArrayHelper::merge($data, $imgParams);
+            Yii::$app->trigger(Image::IMAGE_UPLOADED, $iue);
 
             Yii::$app->response->format = Response::FORMAT_JSON;
             return $data;

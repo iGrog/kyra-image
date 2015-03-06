@@ -27,6 +27,23 @@ class Image extends \yii\db\ActiveRecord
         return 'images';
     }
 
+    public static function Sizes2StringArray($sizes)
+    {
+        $ret = [];
+        foreach($sizes as $key=>$item)
+        {
+            list($w, $h) = $item;
+            $q = isset($item[2]) ? intVal($item[2]) : 90;
+
+            if($w == 0 && $h == 0) $str = ['Type' => 'Original', 'Str' => 'Keep original'];
+            else if($w == 0 && $h != 0) $str = ['Type' => 'ResizeHeight', 'H' => $h, 'Str' => 'Resize to '.$h.'px height'];
+            else if($w != 0 && $h == 0) $str = ['Type' => 'ResizeWidth', 'W' => $w, 'Str' => 'Resize to '.$w. 'px width'];
+            else $str = ['Type' => 'Crop', 'W' => $w, 'H' => $h, 'Str' => 'Crop to '.$w.'x'.$h.'px'];
+            $ret[$key] = $str;
+        }
+        return $ret;
+    }
+
 
     /**
      * @inheritdoc
@@ -112,42 +129,52 @@ class Image extends \yii\db\ActiveRecord
 
     public function AddImage(UploadedFile $img, $uploadParams, $uid = 0, $imgParams = [])
     {
-        if (empty($img)) return ['hasError' => true, 'error' => 'Empty file'];
+        $imgData = [
+            'name' => $img->name,
+            'tempName' => $img->tempName,
+            'size' => $img->size,
+            'type' => $img->type,
+            'img' => $img,
+        ];
+        return $this->RealAddImage($imgData, $uploadParams, $uid, $imgParams);
+    }
+
+
+    public function RealAddImage($imgData, $uploadParams, $uid = 0, $imgParams = [])
+    {
+        if (empty($imgData)) return ['hasError' => true, 'error' => 'Empty file'];
         if (empty($uploadParams)) return ['hasError' => true, 'error' => 'Empty uploadParams'];
         if (empty($uid)) $uid = 0;
 
         // Привести имя файла в нормальный вид, транслитерировать и в нижний регистр
-        $pInfo = pathinfo($img->name);
+        $pInfo = pathinfo($imgData['name']);
         $name = trim(strtolower(Transliter::cleanString($pInfo['filename']) . '.' . $pInfo['extension']));
 
         try
         {
-            $imgData = getimagesize($img->tempName);
+            $imgSize = getimagesize($imgData['tempName']);
             $i = new Image;
             $i->FileName = $name;
             $i->UID = empty($uid) ? null : $uid;
             $i->FileTitle = isset($imgParams['title']) ? $imgParams['title'] : null;
             $i->FileDesc = isset($imgParams['desc']) ? $imgParams['desc'] : null;
-            $i->FileSize = $img->size;
-            $i->FileType = $img->type;
-            $i->Width = $imgData[0];
-            $i->Height = $imgData[1];
-            $i->Orientation = $imgData[0] == $imgData[1]
+            $i->FileSize = $imgData['size'];
+            $i->FileType = $imgData['type'];
+            $i->Width = $imgSize[0];
+            $i->Height = $imgSize[1];
+            $i->Orientation = $imgSize[0] == $imgSize[1]
                             ? 'S'
-                            : ($imgData[0] > $imgData[1] ? 'L' : 'P');
-            $i->Exif = @json_encode(@exif_read_data($img->tempName));
+                            : ($imgSize[0] > $imgSize[1] ? 'L' : 'P');
+            $i->Exif = isset($uploadParams['saveExif'])
+                        ? @json_encode(@exif_read_data($imgData['tempName']))
+                        : null;
             $i->save(false);
             $iid = $i->IID;
             if (empty($iid)) return ['hasError' => false, 'error' => 'Error in DB while adding image'];
 
             $pathGenerator = isset($uploadParams['pathGeneratorClass'])
                             ? Yii::createObject($uploadParams['pathGeneratorClass'])
-                            : Yii::createObject('kyra/image/models/DefaultPathGenerator');
-//            else
-//            {
-//                $absolutePath = Yii::getAlias($uploadParams[0]);
-//                $relativePath = str_replace('@webroot', '', $uploadParams[0]);
-//            }
+                            : new DefaultPathGenerator();
 
             $data = ['IID' => $iid];
 
@@ -162,7 +189,7 @@ class Image extends \yii\db\ActiveRecord
             foreach ($uploadParams['sizes'] as $key => $sizes)
             {
                 // Приходится грузить каждый раз картинку заново, так как ресайзить её несколько раз не получается за 1 раз
-                $origImage = Yii::$app->image->load($img->tempName);
+                $origImage = Yii::$app->image->load($imgData['tempName']);
                 $origWidth = $origImage->width;
                 $origHeight = $origImage->height;
 
@@ -174,31 +201,52 @@ class Image extends \yii\db\ActiveRecord
 
                 $w = $sizes[0];
                 $h = $sizes[1];
+                $quality = isset($sizes[2]) ? $sizes[2] : 90;
 
                 // Записать оригинальный файл не изменяя его
                 if (($w == 0 && $h == 0) || ($w == $origWidth && $h == $origHeight))
                 {
-                    if ($img->saveAs($paramAbsolutePath, false))
+                    if(array_key_exists('img', $imgData) && ($imgData['img'] instanceof  UploadedFile))
                     {
-                        $data['Images'][$key] = $paramRelativePath;
+                        if ($imgData['img']->saveAs($paramAbsolutePath, false))
+                        {
+                            $data['Images'][$key] = $paramRelativePath;
+                        }
+                    }
+                    else
+                    {
+                        copy($imgData['tempName'], $paramAbsolutePath);
                     }
                 }
                 else // Если файл надо как-то ресайзить - то тут ресайзим
                 {
-                    $cm = CoordHelper::Calc($origWidth, $origHeight, $w, $h);
-
-                    $origImage->crop($cm[4], $cm[5], $cm[0], $cm[1]);
-                    $origImage->resize($w, $h, Yii\image\drivers\Image::NONE);
-                    if ($origImage->save($paramAbsolutePath, 90))
+                    if($w !=0 && $h != 0) // Если надо просто кропнуть какую-то часть
                     {
-                        $data['Images'][$key] = $paramRelativePath;
+                        $cm = CoordHelper::Calc($origWidth, $origHeight, $w, $h);
+
+                        $origImage->crop($cm[4], $cm[5], $cm[0], $cm[1]);
+                        $origImage->resize($w, $h, Yii\image\drivers\Image::NONE);
+                        if ($origImage->save($paramAbsolutePath, $quality))
+                            $data['Images'][$key] = $paramRelativePath;
+                    }
+                    else if($h == 0) // Когда надо пропорционально уменьшить фотку по заданной ширине
+                    {
+                        $origImage->resize($w, null);
+                        if($origImage->save($paramAbsolutePath, $quality))
+                            $data['Images'][$key] = $paramRelativePath;
+                    }
+                    else if($w == 0) // Когда надо пропорционально уменьшить фотку по заданной высоте
+                    {
+                        $origImage->resize(null, $h);
+                        if($origImage->save($paramAbsolutePath, $quality))
+                            $data['Images'][$key] = $paramRelativePath;
                     }
                 }
 
                 unset($origImage);
             }
 
-            unlink($img->tempName);
+            unlink($imgData['tempName']);
             return ['hasError' => false, 'data' => $data];
         }
         catch (Exception $ex)

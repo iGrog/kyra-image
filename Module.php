@@ -2,6 +2,7 @@
 
 namespace kyra\image;
 
+use Yii;
 use yii\base\Exception;
 use yii\base\Module as BaseModule;
 
@@ -19,5 +20,24 @@ class Module extends BaseModule
     public function init()
     {
         if(empty($this->uploadParams)) throw new Exception('`uploadParams` must be set in config');
+        $this->registerTranslations();
+    }
+
+    public function registerTranslations()
+    {
+        Yii::$app->i18n->translations['kyra.image/*'] = [
+            'class' => 'yii\i18n\PhpMessageSource',
+            'sourceLanguage' => 'en-US',
+            'basePath' => '@app/modules/users/messages',
+            'fileMap' => [
+                'modules/users/validation' => 'validation.php',
+                'modules/users/form' => 'form.php'
+            ],
+        ];
+    }
+
+    public static function t($category, $message, $params = [], $language = null)
+    {
+        return Yii::t('modules/users/' . $category, $message, $params, $language);
     }
 }
